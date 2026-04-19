@@ -25,18 +25,15 @@
 
 ## 🛠️ 开发者指南 (Developer Guide)
 
-如果你希望在本地克隆并运行本项目，请务必阅读以下配置说明。
+如果你希望在本地克隆并运行本项目，请阅读以下说明。
 
-### 1. 环境准备
+### 1. 环境要求
 - **Node.js**: 建议 v18.0 或更高版本 (推荐 v22+)。
 - **Git**: 用于版本管理。
 
-### 2. 核心依赖：FFmpeg 二进制文件
-本项目由于法律及体积原因，源码仓库通常不包含 FFmpeg 执行文件。**在运行或打包前，必须手动配置：**
-1.  下载适用于 Windows 的 [FFmpeg Release](https://www.gyan.dev/ffmpeg/builds/)。
-2.  在项目根目录下创建目录：`resources/bin/`。
-3.  将下载包中的 `ffmpeg.exe` 和 `ffprobe.exe` 放入该目录下。
-    - *路径结构示例：* `batch-lut-app/resources/bin/ffmpeg.exe`
+### 2. 核心依赖：FFmpeg 执行文件
+- **开箱即用**：为了方便开发者，本项目已在 `resources/bin/` 目录下**内置**了适用于 Windows 的 `ffmpeg.exe` 和 `ffprobe.exe`。
+- **无需配置**：克隆仓库后，你不需要手动下载任何二进制文件或配置环境变量，即可直接运行。
 
 ### 3. 项目安装与运行
 ```bash
@@ -51,10 +48,10 @@ npm run build:win
 ```
 
 ### 4. 项目结构说明
-- `src/main/index.ts`: **主进程**。负责调用 FFmpeg、处理文件系统交互及显卡加速逻辑。
-- `src/renderer/src/`: **渲染进程 (Vue)**。负责 UI 展现、拖拽交互及进度展示。
-- `src/preload/index.ts`: **预加载脚本**。作为主进程与渲染进程的通信桥梁。
-- `resources/`: 存放图标及内置的二进制引擎。
+- `src/main/index.ts`: **主进程**。负责调用 FFmpeg、处理文件系统交互及硬件加速切换逻辑。
+- `src/renderer/src/`: **渲染进程 (Vue)**。负责 UI 展现、拖拽交互、实时进度及耗时统计。
+- `src/preload/index.ts`: **预加载脚本**。作为主进程与渲染进程的安全通信桥梁。
+- `resources/bin/`: 存放内置的 FFmpeg 引擎。
 
 ---
 
