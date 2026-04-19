@@ -1,34 +1,56 @@
-# batch-lut-app
+# 批量色彩还原工具 (Batch LUT Restoration Tool)
 
-An Electron application with Vue and TypeScript
+一款专为 **DJI Osmo Action 5/4**、**Pocket 3** 等设备开发的桌面端批量色彩还原工具。支持 D-Log M 素材一键转标准色彩（Rec.709），并具备自适应原片规格的无损导出能力。
 
-## Recommended IDE Setup
+## 🌟 核心特性
 
-- [VSCode](https://code.visualstudio.com/) + [ESLint](https://marketplace.visualstudio.com/items?itemName=dbaeumer.vscode-eslint) + [Prettier](https://marketplace.visualstudio.com/items?itemName=esbenp.prettier-vscode) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar)
+- **规格自适应**：自动识别原片分辨率、帧率及码率，确保还原后的视频在规格上与原片保持 1:1 一致。
+- **全平台硬件加速**：针对 **NVIDIA (NVENC)** 和 **AMD (AMF)** 显卡进行了深度优化，同时提供高画质 **CPU** 转换模式。
+- **无损画质**：最高支持 **100Mbps+** 比特率导出，采用 H.265 (HEVC) 编码，最大程度保留原片细节。
+- **高效批量处理**：支持多视频拖拽上传、队列管理、一键清空。
+- **安全保障**：支持转换过程中随时中止，并自动清理未完成的临时缓存文件。
+- **零环境依赖**：内置 FFmpeg 引擎，安装即用，无需配置任何系统环境变量。
 
-## Project Setup
+## 🚀 操作手册
 
-### Install
+### 1. 添加视频素材
+- 点击界面中心的虚线框弹出文件选择器，或直接将 **MP4** 视频文件拖入窗口。
+- 选中的视频会显示在列表中，点击右侧的 `×` 可从队列中移除。
 
+### 2. 选择 LUT 文件
+- 点击 **“选择 LUT”** 按钮，选取对应的 `.cube` 色彩查找表文件。
+- 同一批次任务将统一应用该 LUT 进行色彩还原。
+
+### 3. 设置导出目录
+- 点击 **“选择目录”** 按钮，指定还原后视频的保存位置。
+- **防覆盖保护**：如果导出目录与原片目录相同，程序会自动为文件名添加 `_还原_模式` 后缀。
+
+### 4. 选择硬件加速模式
+- **CPU (慢速)**：兼容性最好，画质极佳，适合所有电脑。
+- **NVIDIA (极速)**：推荐拥有英伟达显卡（RTX/GTX 系列）的用户。
+- **AMD (极速)**：推荐拥有 AMD 显卡或锐龙核显的用户。
+
+### 5. 开始导出
+- 点击 **“开始批量导出”**，程序将进入全自动处理流程。
+- 你可以实时看到每个视频的 **处理百分比** 及 **累计耗时**。
+- 如需停止，点击 **“中止导出”**，程序会立刻杀掉进程并清理残留文件。
+
+## 🛠️ 开发者指南
+
+### 项目安装
 ```bash
-$ npm install
+npm install
 ```
 
-### Development
-
+### 开发预览
 ```bash
-$ npm run dev
+npm run dev
 ```
 
-### Build
-
+### 打包生成 EXE
 ```bash
-# For windows
-$ npm run build:win
-
-# For macOS
-$ npm run build:mac
-
-# For Linux
-$ npm run build:linux
+npm run build:win
 ```
+
+## 📄 开源协议
+本项目采用 MIT 协议。
