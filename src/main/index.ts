@@ -17,7 +17,12 @@ let isStopping = false
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 900, height: 750, show: false, autoHideMenuBar: true,
+    width: 950,
+    height: 700,
+    minWidth: 900,
+    minHeight: 650,
+    show: false,
+    autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), sandbox: false }
   })
