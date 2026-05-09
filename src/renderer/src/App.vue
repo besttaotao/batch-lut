@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 
+type AccelerationProfile = {
+  mode: string
+  label: string
+  description: string
+  h264Encoder: string
+  hevcEncoder: string
+  isHardware: boolean
+}
+
 const videoFiles = ref<string[]>([])
 const lutFile = ref<string | null>(null)
 const outputDir = ref<string | null>(null)
-const accelMode = ref('nvenc') // Default to NVIDIA as in design
+const accelerationProfile = ref<AccelerationProfile | null>(null)
+const isDetectingAcceleration = ref(true)
 const statusMessage = ref('Ready')
 const isProcessing = ref(false)
 const isFinished = ref(false)
@@ -13,26 +23,41 @@ const progressText = ref('等待输入...')
 const percent = ref(0)
 const errorMessage = ref('')
 const durationSec = ref(0)
-let timerInterval: any = null
+const isDragging = ref(false)
+let timerInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
-  if ((window as any).api) {
-    ;(window as any).api.onProgress((data: any) => {
+  if (window.api) {
+    loadAccelerationProfile()
+    window.api.onProgress((data) => {
       if (data.status === 'processing') {
-        isProcessing.value = true; isFinished.value = false; errorMessage.value = ''
+        isProcessing.value = true
+        isFinished.value = false
+        errorMessage.value = ''
         currentFile.value = data.filename
         progressText.value = `正在处理 (${data.index + 1}/${data.total})`
-        if (data.percent) percent.value = data.percent
+        if (data.percent !== undefined) percent.value = data.percent
         statusMessage.value = 'Processing'
       } else if (data.status === 'completed') {
-        stopTimer(); isProcessing.value = false; isFinished.value = true; percent.value = 100
+        stopTimer()
+        isProcessing.value = false
+        isFinished.value = true
+        percent.value = 100
         statusMessage.value = 'Completed'
         progressText.value = `处理完成！成功: ${data.successCount}/${data.totalCount}`
       } else if (data.status === 'stopped') {
-        stopTimer(); isProcessing.value = false; statusMessage.value = 'Ready'; currentFile.value = ''; percent.value = 0
+        stopTimer()
+        isProcessing.value = false
+        statusMessage.value = 'Ready'
+        currentFile.value = ''
+        percent.value = 0
         progressText.value = '导出已中止'
+      } else if (data.status === 'fallback') {
+        progressText.value = `硬件加速失败，已切换 CPU 重试：${data.filename}`
       } else if (data.status === 'error') {
-        stopTimer(); isProcessing.value = false; errorMessage.value = `文件 ${data.filename} 失败: ${data.error.slice(0, 80)}`
+        stopTimer()
+        isProcessing.value = false
+        errorMessage.value = `文件 ${data.filename} 失败: ${data.error.slice(0, 80)}`
         statusMessage.value = 'Error'
         progressText.value = '发生错误'
       }
@@ -40,85 +65,154 @@ onMounted(() => {
   }
 })
 
-const removeVideo = (index: number) => {
+const loadAccelerationProfile = async (): Promise<void> => {
+  try {
+    accelerationProfile.value = await window.api.getAccelerationProfile()
+  } catch {
+    accelerationProfile.value = {
+      mode: 'cpu',
+      label: 'CPU 兼容模式',
+      description: '检测失败，已自动使用兼容模式',
+      h264Encoder: 'libx264',
+      hevcEncoder: 'libx265',
+      isHardware: false
+    }
+  } finally {
+    isDetectingAcceleration.value = false
+  }
+}
+
+const removeVideo = (index: number): void => {
   if (isProcessing.value) return
   videoFiles.value.splice(index, 1)
 }
 
-const clearVideos = () => {
+const clearVideos = (): void => {
   if (isProcessing.value) return
   videoFiles.value = []
   percent.value = 0
   progressText.value = '队列已清空'
 }
 
-const stopExport = () => { if (confirm('确定要中止当前的导出任务吗？')) (window as any).api.stopConversion() }
-const startTimer = () => { durationSec.value = 0; timerInterval = setInterval(() => { durationSec.value++ }, 1000) }
-const stopTimer = () => { if (timerInterval) { clearInterval(timerInterval); timerInterval = null } }
+const stopExport = (): void => {
+  if (confirm('确定要中止当前的导出任务吗？')) window.api.stopConversion()
+}
+const startTimer = (): void => {
+  durationSec.value = 0
+  timerInterval = setInterval(() => {
+    durationSec.value++
+  }, 1000)
+}
+const stopTimer = (): void => {
+  if (timerInterval) {
+    clearInterval(timerInterval)
+    timerInterval = null
+  }
+}
 onUnmounted(() => stopTimer())
 
-const selectVideos = async () => {
+const selectVideos = async (): Promise<void> => {
   if (isProcessing.value) return
-  const paths = await (window as any).api.selectVideos()
+  const paths = await window.api.selectVideos()
   if (paths && paths.length > 0) {
-    videoFiles.value = [...videoFiles.value, ...paths]
-    isFinished.value = false
-    progressText.value = `已添加 ${paths.length} 个视频`
+    addVideoPaths(paths)
   }
 }
 
-const selectLut = async () => { 
+const addVideoPaths = (paths: string[]): void => {
+  const mp4Files = paths.filter((path) => path.toLowerCase().endsWith('.mp4'))
+  if (mp4Files.length === 0) {
+    progressText.value = '未发现可添加的 MP4 视频'
+    return
+  }
+
+  videoFiles.value = [...videoFiles.value, ...mp4Files]
+  isFinished.value = false
+  progressText.value = `已添加 ${mp4Files.length} 个视频`
+}
+
+const handleDragEnter = (): void => {
+  if (!isProcessing.value) isDragging.value = true
+}
+
+const handleDragLeave = (): void => {
+  isDragging.value = false
+}
+
+const handleDrop = (event: DragEvent): void => {
+  isDragging.value = false
   if (isProcessing.value) return
-  const path = await (window as any).api.selectCube()
+
+  const files = Array.from(event.dataTransfer?.files || [])
+  const paths = files.map((file) => window.api.getPathForFile(file)).filter(Boolean)
+  addVideoPaths(paths)
+}
+
+const selectLut = async (): Promise<void> => {
+  if (isProcessing.value) return
+  const path = await window.api.selectCube()
   if (path) {
     lutFile.value = path
     progressText.value = '已选择 LUT 文件'
   }
 }
 
-const selectOutputDir = async () => { 
+const selectOutputDir = async (): Promise<void> => {
   if (isProcessing.value) return
-  const path = await (window as any).api.selectOutputDir()
+  const path = await window.api.selectOutputDir()
   if (path) {
     outputDir.value = path
     progressText.value = '已设置输出目录'
   }
 }
 
-const openFolder = () => { if (outputDir.value) (window as any).api.openFolder(outputDir.value) }
+const openFolder = (): void => {
+  if (outputDir.value) window.api.openFolder(outputDir.value)
+}
 
-const start = () => {
+const start = (): void => {
   if (videoFiles.value.length === 0) return alert('请先选择视频素材')
   if (!lutFile.value) return alert('请先选择 LUT 文件')
   if (!outputDir.value) return alert('请选择导出目录')
-  isProcessing.value = true; isFinished.value = false; percent.value = 0; errorMessage.value = ''; startTimer()
-  ;(window as any).api.startConversion({
+  isProcessing.value = true
+  isFinished.value = false
+  percent.value = 0
+  errorMessage.value = ''
+  startTimer()
+  window.api.startConversion({
     videoFiles: JSON.parse(JSON.stringify(videoFiles.value)),
-    lutFile: lutFile.value, outputDir: outputDir.value, accelMode: accelMode.value
+    lutFile: lutFile.value,
+    outputDir: outputDir.value
   })
 }
 
-const formatTime = (s: number) => { 
+const formatTime = (s: number): string => {
   if (s < 60) return `${s}s`
   return `${Math.floor(s / 60)}m ${s % 60}s`
 }
 
-const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
+const getFileName = (path: string): string => path.split(/[\\/]/).pop() || ''
 </script>
 
 <template>
-  <div class="bg-bg-app text-text-main h-screen w-full overflow-hidden flex flex-col font-sans antialiased selection:bg-primary-accent/30 selection:text-white">
+  <div
+    class="bg-bg-app text-text-main h-screen w-full overflow-hidden flex flex-col font-sans antialiased selection:bg-primary-accent/30 selection:text-white"
+  >
     <!-- Top App Bar -->
-    <header class="h-14 border-b border-border-dim bg-bg-sidebar flex items-center justify-between px-4 shrink-0 z-20">
+    <header
+      class="h-14 border-b border-border-dim bg-bg-sidebar flex items-center justify-between px-4 shrink-0 z-20"
+    >
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-2 text-primary-accent">
           <span class="material-symbols-outlined text-[20px]">video_settings</span>
-          <h1 class="font-bold tracking-tight text-[15px] text-white">批量色彩还原工具 <span class="font-normal text-text-muted text-[13px] ml-1">Pro v2.1.0</span></h1>
+          <h1 class="font-bold tracking-tight text-[15px] text-white">批量色彩还原工具</h1>
         </div>
         <div class="h-4 w-px bg-border-dim mx-2"></div>
         <div class="flex items-center gap-2">
-          <span class="font-mono text-[11px] text-text-muted uppercase tracking-wider bg-bg-surface px-2 py-0.5 rounded border border-border-dim">DJI Pocket / Action 专属</span>
-          <span class="font-mono text-[11px] text-primary-accent bg-primary-accent/10 border border-primary-accent/20 px-2 py-0.5 rounded">智能规格自适应</span>
+          <span
+            class="font-mono text-[11px] text-text-muted uppercase tracking-wider bg-bg-surface px-2 py-0.5 rounded border border-border-dim"
+            >DJI Pocket / Action</span
+          >
         </div>
       </div>
     </header>
@@ -128,7 +222,9 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
       <!-- Center Column: File Management -->
       <main class="flex-1 flex flex-col bg-bg-app overflow-hidden relative">
         <!-- Toolbar -->
-        <div class="h-12 border-b border-border-dim flex items-center justify-between px-6 shrink-0 bg-bg-panel/50 backdrop-blur-sm">
+        <div
+          class="h-12 border-b border-border-dim flex items-center justify-between px-6 shrink-0 bg-bg-panel/50 backdrop-blur-sm"
+        >
           <div class="flex items-center gap-4">
             <h2 class="text-[14px] font-medium text-white flex items-center gap-2">
               <span class="material-symbols-outlined text-[18px] text-text-muted">queue</span>
@@ -136,18 +232,18 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
             </h2>
           </div>
           <div class="flex items-center gap-2">
-            <button 
-              @click="selectVideos"
+            <button
               :disabled="isProcessing"
               class="px-3 py-1.5 rounded-md flex items-center gap-1.5 text-[12px] font-medium text-text-main bg-bg-surface border border-border-light hover:bg-bg-surface-hover hover:border-text-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              @click="selectVideos"
             >
               <span class="material-symbols-outlined text-[16px]">add</span>
               添加文件
             </button>
-            <button 
-              @click="clearVideos"
+            <button
               :disabled="isProcessing || videoFiles.length === 0"
               class="w-8 h-8 rounded-md flex items-center justify-center text-text-muted border border-border-dim hover:text-white hover:bg-bg-surface transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              @click="clearVideos"
             >
               <span class="material-symbols-outlined text-[16px]">clear_all</span>
             </button>
@@ -159,46 +255,68 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
           <!-- Grid Container -->
           <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             <!-- File Item -->
-            <div 
-              v-for="(file, index) in videoFiles" :key="index"
+            <div
+              v-for="(file, index) in videoFiles"
+              :key="index"
               class="group relative rounded-xl border border-border-dim bg-bg-panel p-3 hover:border-border-light hover:bg-bg-surface transition-all flex gap-4 cursor-default"
             >
-              <div class="w-24 h-16 rounded-lg bg-[#1a201c] flex items-center justify-center shrink-0 border border-border-light relative overflow-hidden">
-                <span class="material-symbols-outlined text-[24px] text-primary-accent/50 z-10">movie</span>
+              <div
+                class="w-24 h-16 rounded-lg bg-[#1a201c] flex items-center justify-center shrink-0 border border-border-light relative overflow-hidden"
+              >
+                <span class="material-symbols-outlined text-[24px] text-primary-accent/50 z-10"
+                  >movie</span
+                >
               </div>
               <div class="flex flex-col justify-center min-w-0 flex-1">
                 <div class="flex justify-between items-start mb-1">
-                  <h3 class="text-[13px] font-medium text-white truncate pr-2" :title="file">{{ getFileName(file) }}</h3>
-                  <button 
-                    @click.stop="removeVideo(index)"
+                  <h3 class="text-[13px] font-medium text-white truncate pr-2" :title="file">
+                    {{ getFileName(file) }}
+                  </h3>
+                  <button
                     :disabled="isProcessing"
                     class="opacity-0 group-hover:opacity-100 text-text-muted hover:text-red-400 transition-all disabled:hidden"
+                    @click.stop="removeVideo(index)"
                   >
                     <span class="material-symbols-outlined text-[16px]">close</span>
                   </button>
                 </div>
                 <div class="flex flex-wrap gap-2 text-[11px] font-mono text-text-muted">
-                  <span class="bg-bg-surface px-1.5 py-0.5 rounded border border-border-dim">MP4</span>
-                  <span class="bg-bg-surface px-1.5 py-0.5 rounded border border-border-dim">10-bit</span>
+                  <span class="bg-bg-surface px-1.5 py-0.5 rounded border border-border-dim"
+                    >MP4</span
+                  >
+                  <span class="bg-bg-surface px-1.5 py-0.5 rounded border border-border-dim"
+                    >10-bit</span
+                  >
                 </div>
               </div>
             </div>
 
             <!-- Integrated Drop Zone -->
-            <div 
+            <div
               v-if="!isProcessing"
-              @click="selectVideos"
+              :class="{ 'text-primary-accent bg-primary-accent/5': isDragging }"
               class="drop-zone-dashed h-full min-h-[88px] flex flex-col items-center justify-center text-text-muted hover:text-primary-accent hover:bg-primary-accent/5 transition-all cursor-pointer group"
+              @click="selectVideos"
+              @dragenter.prevent="handleDragEnter"
+              @dragover.prevent="handleDragEnter"
+              @dragleave.prevent="handleDragLeave"
+              @drop.prevent="handleDrop"
             >
               <div class="flex items-center gap-2">
-                <span class="material-symbols-outlined text-[20px] group-hover:-translate-y-1 transition-transform">cloud_upload</span>
+                <span
+                  class="material-symbols-outlined text-[20px] group-hover:-translate-y-1 transition-transform"
+                  >cloud_upload</span
+                >
                 <span class="text-[13px] font-medium">拖拽或点击此处添加</span>
               </div>
             </div>
           </div>
-          
+
           <!-- Empty State when processing and no files left to show? (Unlikely with loop but good to have) -->
-          <div v-if="videoFiles.length === 0 && !isProcessing" class="flex-1 flex flex-col items-center justify-center text-text-dim opacity-50">
+          <div
+            v-if="videoFiles.length === 0 && !isProcessing"
+            class="flex-1 flex flex-col items-center justify-center text-text-dim opacity-50"
+          >
             <span class="material-symbols-outlined text-[48px] mb-2">video_library</span>
             <p class="text-[14px]">队列为空，请先添加素材</p>
           </div>
@@ -206,9 +324,13 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
       </main>
 
       <!-- Right Sidebar: Processing Console -->
-      <aside class="w-80 border-l border-border-dim bg-bg-sidebar flex flex-col shrink-0 z-10 shadow-[-8px_0_24px_rgba(0,0,0,0.2)]">
+      <aside
+        class="w-80 border-l border-border-dim bg-bg-sidebar flex flex-col shrink-0 z-10 shadow-[-8px_0_24px_rgba(0,0,0,0.2)]"
+      >
         <div class="h-12 border-b border-border-dim flex items-center px-5 shrink-0">
-          <h2 class="text-[14px] font-medium text-white uppercase tracking-wider flex items-center gap-2">
+          <h2
+            class="text-[14px] font-medium text-white uppercase tracking-wider flex items-center gap-2"
+          >
             <span class="material-symbols-outlined text-[16px] text-primary-accent">tune</span>
             控制台
           </h2>
@@ -216,81 +338,117 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
         <div class="flex-1 overflow-y-auto p-5 flex flex-col gap-6">
           <!-- LUT Selection -->
           <div class="flex flex-col gap-2.5">
-            <label class="text-[12px] font-semibold text-text-muted uppercase tracking-wider flex items-center justify-between">
+            <label
+              class="text-[12px] font-semibold text-text-muted uppercase tracking-wider flex items-center justify-between"
+            >
               色彩预设
-              <span class="text-[10px] bg-bg-surface px-1.5 py-0.5 rounded text-text-dim">.cube</span>
+              <span class="text-[10px] bg-bg-surface px-1.5 py-0.5 rounded text-text-dim"
+                >.cube</span
+              >
             </label>
             <div class="relative group">
-              <button 
-                @click="selectLut"
+              <button
                 :disabled="isProcessing"
                 class="w-full bg-bg-panel border border-border-dim hover:border-primary-accent/50 rounded-lg p-3 flex flex-col items-start gap-1 transition-all focus:outline-none focus:ring-1 focus:ring-primary-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                @click="selectLut"
               >
                 <div class="flex items-center gap-2 text-white w-full">
-                  <span class="material-symbols-outlined text-[18px] text-primary-accent">palette</span>
-                  <span class="text-[13px] font-medium truncate">{{ lutFile ? getFileName(lutFile) : '未选择文件' }}</span>
-                  <span class="material-symbols-outlined text-[16px] text-text-muted ml-auto">folder_open</span>
+                  <span class="material-symbols-outlined text-[18px] text-primary-accent"
+                    >palette</span
+                  >
+                  <span class="text-[13px] font-medium truncate">{{
+                    lutFile ? getFileName(lutFile) : '未选择文件'
+                  }}</span>
+                  <span class="material-symbols-outlined text-[16px] text-text-muted ml-auto"
+                    >folder_open</span
+                  >
                 </div>
-                <span class="text-[11px] text-text-dim font-mono ml-6.5">{{ lutFile ? '点击更换 LUT' : '点击浏览 LUT 文件...' }}</span>
+                <span class="text-[11px] text-text-dim font-mono ml-6.5">{{
+                  lutFile ? '点击更换 LUT' : '点击浏览 LUT 文件...'
+                }}</span>
               </button>
             </div>
           </div>
 
           <!-- Output Directory -->
           <div class="flex flex-col gap-2.5">
-            <label class="text-[12px] font-semibold text-text-muted uppercase tracking-wider flex items-center justify-between">
+            <label
+              class="text-[12px] font-semibold text-text-muted uppercase tracking-wider flex items-center justify-between"
+            >
               输出位置
-              <span class="material-symbols-outlined text-[14px] text-text-dim cursor-pointer hover:text-white">info</span>
+              <span
+                class="material-symbols-outlined text-[14px] text-text-dim cursor-pointer hover:text-white"
+                >info</span
+              >
             </label>
             <div class="relative group">
-              <button 
-                @click="selectOutputDir"
+              <button
                 :disabled="isProcessing"
                 class="w-full bg-bg-panel border border-border-dim hover:border-border-light rounded-lg p-3 flex flex-col items-start gap-1 transition-all focus:outline-none focus:ring-1 focus:ring-primary-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                @click="selectOutputDir"
               >
                 <div class="flex items-center gap-2 text-white w-full">
-                  <span class="material-symbols-outlined text-[18px] text-text-muted">drive_folder_upload</span>
-                  <span class="text-[13px] font-medium truncate">{{ outputDir || '未选择保存路径' }}</span>
+                  <span class="material-symbols-outlined text-[18px] text-text-muted"
+                    >drive_folder_upload</span
+                  >
+                  <span class="text-[13px] font-medium truncate">{{
+                    outputDir || '未选择保存路径'
+                  }}</span>
                 </div>
               </button>
             </div>
           </div>
 
-          <hr class="border-border-dim"/>
+          <hr class="border-border-dim" />
 
           <!-- Hardware Settings -->
           <div class="flex flex-col gap-3">
-            <label class="text-[12px] font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5">
+            <label
+              class="text-[12px] font-semibold text-text-muted uppercase tracking-wider flex items-center gap-1.5"
+            >
               <span class="material-symbols-outlined text-[14px]">memory</span>
               硬件加速引擎
+              <span class="relative group ml-auto flex items-center">
+                <span
+                  class="material-symbols-outlined text-[14px] text-text-dim cursor-pointer hover:text-white"
+                  >info</span
+                >
+                <span
+                  class="pointer-events-none absolute right-0 bottom-full mb-2 hidden w-56 rounded-md border border-border-light bg-bg-surface px-3 py-2 text-left text-[11px] font-normal leading-relaxed tracking-normal text-text-main shadow-lg group-hover:block"
+                >
+                  系统会自动检测当前电脑硬件与 FFmpeg
+                  编码器可用性，并选择最优加速路径。硬件编码失败时会自动切换 CPU 重试。
+                </span>
+              </span>
             </label>
-            <div class="grid grid-cols-3 gap-2">
-              <label class="cursor-pointer">
-                <input class="peer sr-only" name="hw_engine" type="radio" value="cpu" v-model="accelMode" :disabled="isProcessing" />
-                <div class="flex items-center justify-center py-2 rounded-md border border-border-dim bg-bg-surface text-[12px] font-medium text-text-muted peer-checked:border-primary-accent peer-checked:text-primary-accent peer-checked:bg-primary-accent/10 hover:border-border-light transition-all peer-disabled:opacity-50">
-                  CPU
-                </div>
-              </label>
-              <label class="cursor-pointer">
-                <input class="peer sr-only" name="hw_engine" type="radio" value="nvenc" v-model="accelMode" :disabled="isProcessing" />
-                <div class="flex items-center justify-center py-2 rounded-md border border-border-dim bg-bg-surface text-[12px] font-medium text-text-muted peer-checked:border-primary-accent peer-checked:text-primary-accent peer-checked:bg-primary-accent/10 hover:border-border-light transition-all peer-disabled:opacity-50">
-                  NVIDIA
-                </div>
-              </label>
-              <label class="cursor-pointer">
-                <input class="peer sr-only" name="hw_engine" type="radio" value="amf" v-model="accelMode" :disabled="isProcessing" />
-                <div class="flex items-center justify-center py-2 rounded-md border border-border-dim bg-bg-surface text-[12px] font-medium text-text-muted peer-checked:border-primary-accent peer-checked:text-primary-accent peer-checked:bg-primary-accent/10 hover:border-border-light transition-all peer-disabled:opacity-50">
-                  AMD
-                </div>
-              </label>
+            <div class="rounded-lg border border-border-dim bg-bg-panel p-3">
+              <div class="flex items-center gap-2 text-white">
+                <span class="material-symbols-outlined text-[18px] text-primary-accent">
+                  {{ accelerationProfile?.isHardware ? 'bolt' : 'verified_user' }}
+                </span>
+                <span class="text-[13px] font-medium">
+                  {{
+                    isDetectingAcceleration
+                      ? '正在检测最优加速路径...'
+                      : `已自动选择：${accelerationProfile?.label || 'CPU 兼容模式'}`
+                  }}
+                </span>
+              </div>
+              <div class="mt-1 ml-6.5 text-[11px] text-text-dim leading-relaxed">
+                {{
+                  isDetectingAcceleration
+                    ? '正在检测当前电脑可用的硬件编码能力'
+                    : accelerationProfile?.description || '已为当前电脑找到最优加速路径'
+                }}
+              </div>
             </div>
           </div>
-          
+
           <!-- Open Folder Link -->
-          <button 
+          <button
             v-if="isFinished && outputDir"
-            @click="openFolder"
             class="text-[12px] text-primary-accent hover:underline flex items-center gap-1.5 mt-auto"
+            @click="openFolder"
           >
             <span class="material-symbols-outlined text-[16px]">folder_open</span>
             打开导出目录
@@ -299,18 +457,18 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
 
         <!-- Action Area -->
         <div class="p-5 border-t border-border-dim bg-bg-panel/50">
-          <button 
+          <button
             v-if="!isProcessing"
-            @click="start"
             class="w-full bg-primary-accent hover:bg-primary-accent-hover text-[#0a0c0b] font-bold text-[15px] py-3.5 rounded-lg transition-all flex items-center justify-center gap-2 shadow-glow-md hover:shadow-lg active:scale-[0.98]"
+            @click="start"
           >
             <span class="material-symbols-outlined text-[20px]">play_circle</span>
             开始批量导出
           </button>
-          <button 
+          <button
             v-else
-            @click="stopExport"
             class="w-full bg-red-500 hover:bg-red-600 text-white font-bold text-[15px] py-3.5 rounded-lg transition-all flex items-center justify-center gap-2 shadow-lg active:scale-[0.98]"
+            @click="stopExport"
           >
             <span class="material-symbols-outlined text-[20px]">stop_circle</span>
             中止导出任务
@@ -320,13 +478,25 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
     </div>
 
     <!-- Persistent Bottom Status Bar -->
-    <footer class="h-10 border-t border-border-dim bg-[#080908] flex items-center justify-between px-4 shrink-0 z-30 font-mono text-[11px]">
+    <footer
+      class="h-10 border-t border-border-dim bg-[#080908] flex items-center justify-between px-4 shrink-0 z-30 font-mono text-[11px]"
+    >
       <div class="flex items-center gap-4 flex-1 overflow-hidden">
         <!-- Status Indicator -->
         <div class="flex items-center gap-2 shrink-0">
           <span class="relative flex h-2 w-2">
-            <span :class="['absolute inline-flex h-full w-full rounded-full opacity-75', isProcessing ? 'animate-ping bg-primary-accent' : 'bg-text-dim']"></span>
-            <span :class="['relative inline-flex rounded-full h-2 w-2', isProcessing ? 'bg-primary-accent' : 'bg-text-dim']"></span>
+            <span
+              :class="[
+                'absolute inline-flex h-full w-full rounded-full opacity-75',
+                isProcessing ? 'animate-ping bg-primary-accent' : 'bg-text-dim'
+              ]"
+            ></span>
+            <span
+              :class="[
+                'relative inline-flex rounded-full h-2 w-2',
+                isProcessing ? 'bg-primary-accent' : 'bg-text-dim'
+              ]"
+            ></span>
           </span>
           <span class="text-text-muted uppercase">{{ statusMessage }}</span>
         </div>
@@ -336,12 +506,19 @@ const getFileName = (path: string) => path.split(/[\\/]/).pop() || ''
           &gt; {{ errorMessage || progressText || '等待输入...' }}
         </div>
       </div>
-      
+
       <!-- Progress Section -->
       <div v-if="isProcessing || percent > 0" class="flex items-center gap-4 w-1/3 justify-end">
-        <div class="text-text-muted shrink-0" v-if="durationSec > 0">耗时: {{ formatTime(durationSec) }}</div>
-        <div class="w-32 h-1.5 bg-bg-surface rounded-full overflow-hidden border border-border-dim shrink-0">
-          <div class="h-full bg-primary-accent transition-all duration-300" :style="{ width: percent + '%' }"></div>
+        <div v-if="durationSec > 0" class="text-text-muted shrink-0">
+          耗时: {{ formatTime(durationSec) }}
+        </div>
+        <div
+          class="w-32 h-1.5 bg-bg-surface rounded-full overflow-hidden border border-border-dim shrink-0"
+        >
+          <div
+            class="h-full bg-primary-accent transition-all duration-300"
+            :style="{ width: percent + '%' }"
+          ></div>
         </div>
         <div class="text-primary-accent font-semibold w-8 text-right shrink-0">{{ percent }}%</div>
       </div>

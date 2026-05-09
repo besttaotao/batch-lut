@@ -13,6 +13,7 @@ asarUnpack:
   - resources/**
 win:
   executableName: batch-lut-app
+  signAndEditExecutable: false
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

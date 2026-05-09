@@ -98,12 +98,14 @@ spacing:
 # Stitch Design System: Batch LUT Restoration Tool
 
 ## 1. Brand Identity
+
 - **Name**: Batch LUT Restoration
 - **Concept**: Professional, High-Efficiency, Precision Media Processing.
 - **Target Audience**: Content creators, DJI Action/Pocket camera users, professional videographers.
 - **Visual Style**: Modern Dark Mode, "Pro Video Tool" aesthetic (similar to DaVinci Resolve or Adobe Premiere), accented with a "Restoration Green" or "Processing Blue".
 
 ## 2. Color Palette
+
 - **Primary**: `#42b883` (Restoration Green) - Used for progress, success, and primary actions.
 - **Secondary**: `#2196f3` (Processing Blue) - Used for info and secondary interactive elements.
 - **Background**: `#121212` (Deep Night) - Main application background.
@@ -113,6 +115,7 @@ spacing:
 - **Error**: `#ff5252`
 
 ## 3. Typography
+
 - **Primary Font**: Inter, system-ui, sans-serif.
 - **Scale**:
   - H1: 24px (Bold)
@@ -123,10 +126,12 @@ spacing:
 ## 4. Components & Layout
 
 ### A. Navigation/Header
+
 - Compact title area with a "Pro" badge.
 - Status indicator (Ready, Processing, Error).
 
 ### B. Media Management (Center Piece)
+
 - **Drop Zone**: Large, intuitive area to drag & drop MP4 files.
 - **File Grid**: A refined list or grid showing added videos with:
   - Thumbnail placeholder (generic video icon).
@@ -135,24 +140,28 @@ spacing:
   - "Add more" button.
 
 ### C. Processing Controls
+
 - **LUT Selector**: A card-style input to select the `.cube` file.
 - **Output Directory**: Input to set the destination.
 - **Hardware Acceleration**: Toggle/Radio buttons for CPU / NVIDIA (NVENC) / AMD (AMF).
 
 ### D. Progress & Execution
+
 - **Main Action Button**: Large, prominent "Start Processing" button.
-- **Progress Overlay/Bar**: 
+- **Progress Overlay/Bar**:
   - Percentage text.
   - Elapsed time timer.
   - Current processing filename.
   - Smooth animated progress bar.
 
 ## 5. Interaction Model
+
 1. **Import**: Drag files -> Grid populates.
 2. **Configure**: Select LUT and Destination.
 3. **Run**: Click Start -> UI transitions to "Processing Mode" (dimming inputs, showing progress).
 4. **Finish**: Success animation -> Option to open the output folder.
 
 ## 6. Layout Strategy
+
 - **Compact View**: All-in-one screen, no scrolling for main controls.
 - **Responsive**: Grid adjusts based on the number of files.
